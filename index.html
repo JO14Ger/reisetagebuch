@@ -290,7 +290,7 @@ body>*:not(#collagePreview):not(#albumPrint){display:none!important;}
 <div class="tl-i" onclick="exportTrip()"><div class="tl-ic">📤</div><div class="tl-info"><strong>Reise exportieren</strong><small>Aktuelle Reise als Datei</small></div><div class="tl-arr">›</div></div>
 <div class="tl-i" onclick="exportAll()"><div class="tl-ic">💾</div><div class="tl-info"><strong>Alles sichern</strong><small>Komplettes Backup aller Reisen</small></div><div class="tl-arr">›</div></div>
 <div class="tl-i" onclick="document.getElementById('impFile').click()"><div class="tl-ic">📂</div><div class="tl-info"><strong>Daten importieren</strong><small>Backup oder Reise laden (Handy→PC)</small></div><div class="tl-arr">›</div>
-<input type="file" id="impFile" accept=".json,.zip" style="display:none" onchange="importData(event)"></div>
+<input type="file" id="impFile" accept=".json,.zip,application/json,application/zip,application/x-zip-compressed,application/octet-stream,*/*" style="display:none" onchange="importData(event)"></div>
 <div class="tl-i" onclick="deleteTrip()"><div class="tl-ic">🗑️</div><div class="tl-info"><strong>Reise löschen</strong><small>Aktuelle Reise entfernen</small></div><div class="tl-arr">›</div></div></div></section>
 
 <section class="scr" id="scrSlideshow"><div class="card"><div class="card-t">🎬 Diashow</div>
@@ -733,33 +733,45 @@ a.download='reisetagebuch-backup-'+new Date().toISOString().slice(0,10)+'.zip';a
 URL.revokeObjectURL(url);hideLd();toast('Backup gespeichert!');}catch(e){hideLd();toast('Backup-Fehler: '+e.message);console.error(e);}}
 
 async function importData(ev){const f=ev.target.files[0];if(!f)return;
-if(!confirm('Daten importieren? Bestehende Reisen mit gleicher ID werden aktualisiert.'))return;showLd('Import...');
+if(!confirm('Daten importieren? Bestehende Reisen mit gleicher ID werden aktualisiert.')){ev.target.value='';return;}
+showLd('Datei wird gelesen...');
 try{let data;
-if(f.name.endsWith('.zip')){
-const zip=await JSZip.loadAsync(f);const djson=await zip.file('data.json').async('string');data=JSON.parse(djson);
+// Detect ZIP by magic bytes (PK = 0x50 0x4B), not by filename
+const head=new Uint8Array(await f.slice(0,4).arrayBuffer());
+const isZip=(head[0]===0x50&&head[1]===0x4B);
+if(isZip){showLd('ZIP wird entpackt...');
+let zip;try{zip=await JSZip.loadAsync(f);}catch(ze){throw new Error('ZIP-Datei konnte nicht gelesen werden: '+ze.message);}
+const df=zip.file('data.json');if(!df)throw new Error('Keine data.json im ZIP gefunden – ist das die richtige Datei?');
+const djson=await df.async('string');data=JSON.parse(djson);
+if(!data.trips||!Array.isArray(data.trips))throw new Error('Ungültiges Datenformat in data.json');
+showLd('Reisen werden geladen...');
 for(const trip of data.trips){await dp(ST,trip.id,trip);const ex=tripList.findIndex(t=>t.id===trip.id);
 const entry={id:trip.id,title:trip.title,start:trip.start,end:trip.end,route:trip.route,
 updated:trip.updated||Date.now(),photoCount:(trip.days||[]).reduce((s,d)=>(d.images||[]).length+s,0)};
 if(ex>=0)tripList[ex]=entry;else tripList.push(entry);}
-const imgFiles=Object.keys(zip.files).filter(n=>n.startsWith('images/'));
+const imgFiles=Object.keys(zip.files).filter(n=>n.startsWith('images/')&&!n.endsWith('/'));
 let n=0;for(const path of imgFiles){const id=path.replace('images/','').replace('.jpg','');
+showLd('Fotos ('+n+'/'+imgFiles.length+')...');
 const fullBlob=await zip.file(path).async('blob');const thumbBlob=await resize(fullBlob,THW,TQ);
-const im=data.imageMeta&&data.imageMeta[id]||{};
+const im=(data.imageMeta&&data.imageMeta[id])||{};
 await dp(SI,id,{id,full:fullBlob,thumb:thumbBlob,title:im.title||'',caption:im.caption||'',
-favorite:im.favorite||false,created:Date.now()});n++;if(n%3===0)showLd('Fotos ('+n+'/'+imgFiles.length+')...');}}
-else{const txt=await f.text();data=JSON.parse(txt);
-if(!data.trips||!Array.isArray(data.trips))throw new Error('Ungültig');
+favorite:im.favorite||false,created:Date.now()});n++;}}
+else{showLd('JSON wird gelesen...');
+const txt=await f.text();data=JSON.parse(txt);
+if(!data.trips||!Array.isArray(data.trips))throw new Error('Ungültiges Format – keine Reisen gefunden');
 for(const trip of data.trips){await dp(ST,trip.id,trip);const ex=tripList.findIndex(t=>t.id===trip.id);
 const entry={id:trip.id,title:trip.title,start:trip.start,end:trip.end,route:trip.route,
 updated:trip.updated||Date.now(),photoCount:(trip.days||[]).reduce((s,d)=>(d.images||[]).length+s,0)};
 if(ex>=0)tripList[ex]=entry;else tripList.push(entry);}
 if(data.images){let n=0;const total=Object.keys(data.images).length;
-for(const[id,imgData]of Object.entries(data.images)){
+for(const[id,imgData]of Object.entries(data.images)){showLd('Fotos ('+n+'/'+total+')...');
 const resp=await fetch(imgData.src);const fullBlob=await resp.blob();const thumbBlob=await resize(fullBlob,THW,TQ);
 await dp(SI,id,{id,full:fullBlob,thumb:thumbBlob,title:imgData.title||'',caption:imgData.caption||'',
-favorite:imgData.favorite||false,created:Date.now()});n++;if(n%5===0)showLd('Import ('+n+'/'+total+')...');}}}
+favorite:imgData.favorite||false,created:Date.now()});n++;}}}
 await saveTripList();renderTripList();hideLd();toast(data.trips.length+' Reise(n) importiert!');}
-catch(e){hideLd();toast('Import fehlgeschlagen: '+e.message);console.error(e);}ev.target.value='';}
+catch(e){hideLd();toast('Import fehlgeschlagen');console.error('Import error:',e);
+alert('Import fehlgeschlagen:\n\n'+e.message+'\n\nBitte prüfe ob du die richtige Datei gewählt hast.');}
+ev.target.value='';}
 
 // ── STATS ──
 function updateStats(){if(!curTrip){document.getElementById('tripStatsEl').innerHTML='';return;}
