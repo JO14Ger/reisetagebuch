@@ -290,7 +290,7 @@ body>*:not(#collagePreview):not(#albumPrint){display:none!important;}
 <div class="tl-i" onclick="exportTrip()"><div class="tl-ic">📤</div><div class="tl-info"><strong>Reise exportieren</strong><small>Aktuelle Reise als Datei</small></div><div class="tl-arr">›</div></div>
 <div class="tl-i" onclick="exportAll()"><div class="tl-ic">💾</div><div class="tl-info"><strong>Alles sichern</strong><small>Komplettes Backup aller Reisen</small></div><div class="tl-arr">›</div></div>
 <div class="tl-i" onclick="document.getElementById('impFile').click()"><div class="tl-ic">📂</div><div class="tl-info"><strong>Daten importieren</strong><small>Backup oder Reise laden (Handy→PC)</small></div><div class="tl-arr">›</div>
-<input type="file" id="impFile" accept=".json" style="display:none" onchange="importData(event)"></div>
+<input type="file" id="impFile" accept=".json,.zip" style="display:none" onchange="importData(event)"></div>
 <div class="tl-i" onclick="deleteTrip()"><div class="tl-ic">🗑️</div><div class="tl-info"><strong>Reise löschen</strong><small>Aktuelle Reise entfernen</small></div><div class="tl-arr">›</div></div></div></section>
 
 <section class="scr" id="scrSlideshow"><div class="card"><div class="card-t">🎬 Diashow</div>
@@ -372,10 +372,12 @@ Datei wählen<input type="file" id="ssMusic" accept="audio/*" style="display:non
 <div class="toast" id="toastEl"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
 const DB='rtb-db',DBV=2,ST='trips',SI='images',SM='meta',TK='rtb-theme';
 const MOODS=['😊','😍','🤩','😌','😴','😢','🤔','😤','🥳','🤢'];
 const WEATH=['☀️','⛅','☁️','🌧️','⛈️','🌨️','🌬️','🌡️'];
+const TRANS=[{e:'🚶',l:'Wandern'},{e:'🚲',l:'Fahrrad'},{e:'🚗',l:'Auto'},{e:'🚌',l:'Bus'},{e:'🚆',l:'Zug'},{e:'⛵',l:'Schiff'},{e:'✈️',l:'Flug'},{e:'🛵',l:'Roller'}];
 const MXW=1920,THW=400,IQ=.85,TQ=.7;
 let db=null,tripList=[],curTripId=null,curTrip=null,curDayIdx=-1,galFilter='all',scrHist=[];
 let vwImgs=[],vwIdx=0;let edDayIdx=-1,edImgIdx=-1,edBaseImg=null;
@@ -491,7 +493,7 @@ if(!start||!end){document.getElementById('setupMsg').textContent='Start- und End
 if(new Date(end)<new Date(start)){document.getElementById('setupMsg').textContent='Enddatum muss nach Start liegen';document.getElementById('setupMsg').className='smsg err';return;}
 const isNew=!curTripId;const id=curTripId||('trip_'+Date.now().toString(36));let days=[];
 if(isNew){for(let d=new Date(start);d<=new Date(end);d.setDate(d.getDate()+1))
-days.push({date:d.toISOString().slice(0,10),title:'',diary:'',mood:'',weather:'',location:'',expenses:0,images:[]});}
+days.push({date:d.toISOString().slice(0,10),title:'',diary:'',mood:'',weather:'',location:'',expenses:0,km:0,transport:'',images:[]});}
 else{days=curTrip?curTrip.days:[];}
 const trip={id,title:title||'Meine Reise',route,start,end,days,updated:Date.now()};
 await dp(ST,id,trip);curTrip=trip;curTripId=id;
@@ -510,6 +512,7 @@ function renderDays(){if(!curTrip)return;const el=document.getElementById('daysL
 curTrip.days.forEach((day,i)=>{const card=document.createElement('div');card.className='dc';card.onclick=()=>openDay(i);
 const ds=fmtDate(day.date);let meta='';
 if(day.mood)meta+='<span>'+day.mood+'</span>';if(day.weather)meta+='<span>'+day.weather+'</span>';
+if(day.transport)meta+='<span>'+day.transport+'</span>';if(day.km>0)meta+='<span>'+day.km+' km</span>';
 if(day.location)meta+='<span>📍 '+day.location+'</span>';if(day.expenses>0)meta+='<span>💰 '+day.expenses+'€</span>';
 const ic=(day.images||[]).length;if(ic>0)meta+='<span>📷 '+ic+'</span>';
 card.innerHTML='<div class="dc-l"><div class="dc-num">Tag '+(i+1)+'</div><div class="dc-date">'+ds+'</div><div class="dc-title">'+(day.title||'Kein Titel')+'</div><div class="dc-meta">'+meta+'</div></div><div class="dc-thumbs" id="dth'+i+'"></div>';
@@ -524,13 +527,17 @@ async function renderDay(i){const day=curTrip.days[i];if(!day)return;const el=do
 const ds=new Date(day.date+'T00:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 let mH=MOODS.map(m=>'<button class="mood-b '+(day.mood===m?'on':'')+'" onclick="setMood('+i+",'"+m+"')"+'">'+ m+'</button>').join('');
 let wH=WEATH.map(w=>'<button class="weather-b '+(day.weather===w?'on':'')+'" onclick="setWeath('+i+",'"+ w+"')"+'">'+ w+'</button>').join('');
+let tH=TRANS.map(t=>'<button class="mood-b '+(day.transport===t.e?'on':'')+'" onclick="setTrans('+i+",'"+ t.e+"')"+'" title="'+t.l+'">'+ t.e+'</button>').join('');
 el.innerHTML='<div class="dd-hdr"><span class="dd-num">Tag '+(i+1)+'</span><span class="dd-date">'+ds+'</span></div>'+
 '<div class="card"><div class="fg"><label class="fl">Titel</label><input class="fi" id="dT" type="text" placeholder="Was hast du erlebt?" value="'+(day.title||'').replace(/"/g,'&quot;')+'" oninput="udF('+i+',\'title\',this.value)"></div>'+
 '<div class="fg"><label class="fl">Tagebuch</label><textarea class="fi" rows="4" placeholder="Deine Erlebnisse..." oninput="udF('+i+',\'diary\',this.value)">'+(day.diary||'')+'</textarea></div></div>'+
 '<div class="card"><div class="fg"><label class="fl">Stimmung</label><div class="mood-sel">'+mH+'</div></div>'+
 '<div class="fg"><label class="fl">Wetter</label><div class="weather-sel">'+wH+'</div></div>'+
+'<div class="fg"><label class="fl">Fortbewegung</label><div class="mood-sel">'+tH+'</div></div>'+
 '<div class="fr"><div class="fg"><label class="fl">📍 Ort</label><input class="fi" type="text" placeholder="z.B. Kyoto" value="'+(day.location||'').replace(/"/g,'&quot;')+'" oninput="udF('+i+',\'location\',this.value)"></div>'+
-'<div class="fg"><label class="fl">💰 Ausgaben (€)</label><input class="fi" type="number" placeholder="0" min="0" step="0.01" value="'+(day.expenses||'')+'" oninput="udF('+i+',\'expenses\',Number(this.value)||0)"></div></div></div>'+
+'<div class="fg"><label class="fl">🛤️ Kilometer</label><input class="fi" type="number" placeholder="0" min="0" step="0.1" value="'+(day.km||'')+'" oninput="udF('+i+',\'km\',Number(this.value)||0)"></div></div>'+
+'<div class="fr"><div class="fg"><label class="fl">💰 Ausgaben (€)</label><input class="fi" type="number" placeholder="0" min="0" step="0.01" value="'+(day.expenses||'')+'" oninput="udF('+i+',\'expenses\',Number(this.value)||0)"></div>'+
+'<div class="fg"></div></div></div>'+
 '<div class="card"><div class="card-t">📸 Fotos</div><div class="pa"><label class="pa-btn"><span class="ic">📷</span>Foto aufnehmen<input type="file" accept="image/*" capture="environment" onchange="hPI('+i+',this.files)"></label>'+
 '<label class="pa-btn"><span class="ic">🖼️</span>Aus Galerie<input type="file" accept="image/*" multiple onchange="hPI('+i+',this.files)"></label></div><div class="pg" id="dayPG"></div></div>'+
 '<div class="bg" style="justify-content:center;margin-top:6px"><button class="btn btn-d btn-sm" onclick="delDay('+i+')">Tag löschen</button></div>';
@@ -549,6 +556,7 @@ function hPI(di,files){if(!files||!files.length)return;addPhotos(di,[...files]);
 function udF(i,f,v){curTrip.days[i][f]=v;clearTimeout(saveTm);saveTm=setTimeout(()=>saveCurTrip(),500);}
 async function setMood(i,m){curTrip.days[i].mood=curTrip.days[i].mood===m?'':m;await saveCurTrip();renderDay(i);}
 async function setWeath(i,w){curTrip.days[i].weather=curTrip.days[i].weather===w?'':w;await saveCurTrip();renderDay(i);}
+async function setTrans(i,t){curTrip.days[i].transport=curTrip.days[i].transport===t?'':t;await saveCurTrip();renderDay(i);}
 async function delDay(i){if(!confirm('Tag '+(i+1)+' löschen?'))return;const day=curTrip.days[i];
 if(day.images)for(const id of day.images){try{await dd(SI,id);}catch(e){}revTh(id);}
 curTrip.days.splice(i,1);await saveCurTrip();renderDays();updateStats();goBack();toast('Gelöscht');}
@@ -694,27 +702,53 @@ for(const id of pageIds){const d=await dg(SI,id);if(!d)continue;const u=URL.crea
 const img=document.createElement('img');img.src=u;page.appendChild(img);}cp.appendChild(page);}
 hideLd();window.print();}
 
-// ── EXPORT/IMPORT ──
-async function exportTrip(){if(!curTrip)return;showLd('Export...');
-try{const exp={version:3,trips:[JSON.parse(JSON.stringify(curTrip))],images:{}};
+// ── EXPORT/IMPORT (ZIP) ──
+async function exportTrip(){if(!curTrip)return;showLd('Export wird vorbereitet...');
+try{const zip=new JSZip();const meta={version:4,trips:[JSON.parse(JSON.stringify(curTrip))],imageMeta:{}};
+let n=0,total=curTrip.days.reduce((s,d)=>(d.images||[]).length+s,0);
 for(const day of curTrip.days)for(const id of(day.images||[])){const d=await dg(SI,id);if(!d)continue;
-exp.images[id]={title:d.title||'',caption:d.caption||'',favorite:d.favorite||false,src:await b2d(d.full)};}
-const blob=new Blob([JSON.stringify(exp)],{type:'application/json'});const url=URL.createObjectURL(blob);
-const a=document.createElement('a');a.href=url;a.download='reise-'+(curTrip.title||'export')+'-'+new Date().toISOString().slice(0,10)+'.json';a.click();
-URL.revokeObjectURL(url);hideLd();toast('Export fertig!');}catch(e){hideLd();toast('Fehler');console.error(e);}}
+meta.imageMeta[id]={title:d.title||'',caption:d.caption||'',favorite:d.favorite||false};
+zip.file('images/'+id+'.jpg',d.full);n++;if(n%3===0)showLd('Export ('+n+'/'+total+')...');}
+zip.file('data.json',JSON.stringify(meta));
+const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}},
+p=>{showLd('Packen... '+Math.round(p.percent)+'%');});
+const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;
+a.download='reise-'+(curTrip.title||'export')+'-'+new Date().toISOString().slice(0,10)+'.zip';a.click();
+URL.revokeObjectURL(url);hideLd();toast('Export fertig!');}catch(e){hideLd();toast('Export-Fehler: '+e.message);console.error(e);}}
 
-async function exportAll(){showLd('Backup...');
-try{const exp={version:3,trips:[],images:{}};
-for(const tl of tripList){const t=await dg(ST,tl.id);if(!t)continue;exp.trips.push(JSON.parse(JSON.stringify(t)));
-for(const day of(t.days||[]))for(const id of(day.images||[])){if(exp.images[id])continue;
-const d=await dg(SI,id);if(!d)continue;exp.images[id]={title:d.title||'',caption:d.caption||'',favorite:d.favorite||false,src:await b2d(d.full)};}}
-const blob=new Blob([JSON.stringify(exp)],{type:'application/json'});const url=URL.createObjectURL(blob);
-const a=document.createElement('a');a.href=url;a.download='reisetagebuch-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();
-URL.revokeObjectURL(url);hideLd();toast('Backup gespeichert!');}catch(e){hideLd();toast('Fehler');console.error(e);}}
+async function exportAll(){showLd('Backup wird vorbereitet...');
+try{const zip=new JSZip();const meta={version:4,trips:[],imageMeta:{}};
+let n=0,total=0;
+for(const tl of tripList){const t=await dg(ST,tl.id);if(!t)continue;meta.trips.push(JSON.parse(JSON.stringify(t)));
+total+=(t.days||[]).reduce((s,d)=>(d.images||[]).length+s,0);}
+for(const trip of meta.trips)for(const day of(trip.days||[]))for(const id of(day.images||[])){
+if(meta.imageMeta[id])continue;const d=await dg(SI,id);if(!d)continue;
+meta.imageMeta[id]={title:d.title||'',caption:d.caption||'',favorite:d.favorite||false};
+zip.file('images/'+id+'.jpg',d.full);n++;if(n%3===0)showLd('Fotos ('+n+'/'+total+')...');}
+zip.file('data.json',JSON.stringify(meta));
+const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}},
+p=>{showLd('Packen... '+Math.round(p.percent)+'%');});
+const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;
+a.download='reisetagebuch-backup-'+new Date().toISOString().slice(0,10)+'.zip';a.click();
+URL.revokeObjectURL(url);hideLd();toast('Backup gespeichert!');}catch(e){hideLd();toast('Backup-Fehler: '+e.message);console.error(e);}}
 
 async function importData(ev){const f=ev.target.files[0];if(!f)return;
-if(!confirm('Daten importieren?'))return;showLd('Import...');
-try{const txt=await f.text();const data=JSON.parse(txt);if(!data.trips||!Array.isArray(data.trips))throw new Error('Ungültig');
+if(!confirm('Daten importieren? Bestehende Reisen mit gleicher ID werden aktualisiert.'))return;showLd('Import...');
+try{let data;
+if(f.name.endsWith('.zip')){
+const zip=await JSZip.loadAsync(f);const djson=await zip.file('data.json').async('string');data=JSON.parse(djson);
+for(const trip of data.trips){await dp(ST,trip.id,trip);const ex=tripList.findIndex(t=>t.id===trip.id);
+const entry={id:trip.id,title:trip.title,start:trip.start,end:trip.end,route:trip.route,
+updated:trip.updated||Date.now(),photoCount:(trip.days||[]).reduce((s,d)=>(d.images||[]).length+s,0)};
+if(ex>=0)tripList[ex]=entry;else tripList.push(entry);}
+const imgFiles=Object.keys(zip.files).filter(n=>n.startsWith('images/'));
+let n=0;for(const path of imgFiles){const id=path.replace('images/','').replace('.jpg','');
+const fullBlob=await zip.file(path).async('blob');const thumbBlob=await resize(fullBlob,THW,TQ);
+const im=data.imageMeta&&data.imageMeta[id]||{};
+await dp(SI,id,{id,full:fullBlob,thumb:thumbBlob,title:im.title||'',caption:im.caption||'',
+favorite:im.favorite||false,created:Date.now()});n++;if(n%3===0)showLd('Fotos ('+n+'/'+imgFiles.length+')...');}}
+else{const txt=await f.text();data=JSON.parse(txt);
+if(!data.trips||!Array.isArray(data.trips))throw new Error('Ungültig');
 for(const trip of data.trips){await dp(ST,trip.id,trip);const ex=tripList.findIndex(t=>t.id===trip.id);
 const entry={id:trip.id,title:trip.title,start:trip.start,end:trip.end,route:trip.route,
 updated:trip.updated||Date.now(),photoCount:(trip.days||[]).reduce((s,d)=>(d.images||[]).length+s,0)};
@@ -723,14 +757,14 @@ if(data.images){let n=0;const total=Object.keys(data.images).length;
 for(const[id,imgData]of Object.entries(data.images)){
 const resp=await fetch(imgData.src);const fullBlob=await resp.blob();const thumbBlob=await resize(fullBlob,THW,TQ);
 await dp(SI,id,{id,full:fullBlob,thumb:thumbBlob,title:imgData.title||'',caption:imgData.caption||'',
-favorite:imgData.favorite||false,created:Date.now()});n++;if(n%5===0)showLd('Import ('+n+'/'+total+')...');}}
+favorite:imgData.favorite||false,created:Date.now()});n++;if(n%5===0)showLd('Import ('+n+'/'+total+')...');}}}
 await saveTripList();renderTripList();hideLd();toast(data.trips.length+' Reise(n) importiert!');}
-catch(e){hideLd();toast('Import fehlgeschlagen');console.error(e);}ev.target.value='';}
+catch(e){hideLd();toast('Import fehlgeschlagen: '+e.message);console.error(e);}ev.target.value='';}
 
 // ── STATS ──
 function updateStats(){if(!curTrip){document.getElementById('tripStatsEl').innerHTML='';return;}
-let tp=0,te=0,td=0;curTrip.days.forEach(d=>{tp+=(d.images||[]).length;te+=(d.expenses||0);if(d.diary&&d.diary.trim())td++;});
-document.getElementById('tripStatsEl').innerHTML='<div class="sg"><div class="sb"><div class="sb-n">'+curTrip.days.length+'</div><div class="sb-l">Tage</div></div><div class="sb"><div class="sb-n">'+tp+'</div><div class="sb-l">Fotos</div></div><div class="sb"><div class="sb-n">'+td+'</div><div class="sb-l">Einträge</div></div><div class="sb"><div class="sb-n">'+te.toFixed(0)+'€</div><div class="sb-l">Ausgaben</div></div></div>';}
+let tp=0,te=0,td=0,tk=0;curTrip.days.forEach(d=>{tp+=(d.images||[]).length;te+=(d.expenses||0);tk+=(d.km||0);if(d.diary&&d.diary.trim())td++;});
+document.getElementById('tripStatsEl').innerHTML='<div class="sg"><div class="sb"><div class="sb-n">'+curTrip.days.length+'</div><div class="sb-l">Tage</div></div><div class="sb"><div class="sb-n">'+tp+'</div><div class="sb-l">Fotos</div></div><div class="sb"><div class="sb-n">'+tk.toFixed(0)+'</div><div class="sb-l">Kilometer</div></div><div class="sb"><div class="sb-n">'+te.toFixed(0)+'€</div><div class="sb-l">Ausgaben</div></div></div>';}
 
 // ── HELPERS ──
 function fmtDate(s){return new Date(s+'T00:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'numeric',month:'short'});}
